@@ -1,0 +1,29 @@
+name: UHBVN T9mint
+
+on:
+  workflow_dispatch:         # Manual trigger from GitHub UI
+  schedule:
+    - cron: '*/10 * * * *'   # Runs every 10 minutes
+
+concurrency:
+  group: test-runner-group
+  cancel-in-progress: false  # Allow overlap if previous hasn't finished
+
+jobs:
+  run-test-main:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run main.py
+        run: python main.py
