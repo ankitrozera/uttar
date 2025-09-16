@@ -1,4 +1,4 @@
-import requests, json, time
+import requests, json, time, os, signal
 from datetime import datetime
 
 # 🔐 OAuth credentials
@@ -79,13 +79,20 @@ def write_metadata(sheet_id, instance_id, parent_id=None):
     data = {
         "values": [[f"Instance: {instance_id}", f"Created: {now}", f"Parent: {parent_id or 'None'}"]]
     }
-    requests.post(url, headers=headers, params=params, data=json.dumps(data))
+    res = requests.post(url, headers=headers, params=params, data=json.dumps(data))
+    if res.status_code == 200:
+        print("📌 Metadata written.")
+    else:
+        print("❌ Metadata write failed:", res.text)
 
 # 📤 Write timestamp row
 def write_timestamp():
     global rows_written
     if rows_written >= MAX_ROWS_PER_SHEET or not spreadsheet_ids:
         sheet_id = create_new_sheet()
+        if not sheet_id:
+            print("❌ Could not create sheet. Exiting.")
+            return
     else:
         sheet_id = spreadsheet_ids[-1]
 
@@ -119,6 +126,9 @@ def main():
 
     if not spreadsheet_ids:
         sheet_id = create_new_sheet()
+        if not sheet_id:
+            print("❌ Could not create sheet. Exiting.")
+            return
     else:
         sheet_id = spreadsheet_ids[-1]
 
