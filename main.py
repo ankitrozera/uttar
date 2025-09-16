@@ -67,6 +67,20 @@ def write_headers(sheet_id):
     data = {"values": [["timestamp"]]}
     requests.post(url, headers=headers, params=params, data=json.dumps(data))
 
+# 🧾 Write metadata
+def write_metadata(sheet_id, instance_id, parent_id=None):
+    url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/Sheet1!A2:append"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    params = {"valueInputOption": "RAW"}
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data = {
+        "values": [[f"Instance: {instance_id}", f"Created: {now}", f"Parent: {parent_id or 'None'}"]]
+    }
+    requests.post(url, headers=headers, params=params, data=json.dumps(data))
+
 # 📤 Write timestamp row
 def write_timestamp():
     global rows_written
@@ -93,10 +107,36 @@ def write_timestamp():
     else:
         print("❌ Write failed:", res.text)
 
-# 🚀 Main loop
+# 🛑 Kill current instance
+def kill_instance():
+    print("🛑 Terminating instance.")
+    os.kill(os.getpid(), signal.SIGTERM)
+
+# 🚀 Main loop with control
 def main():
+    instance_id = f"TestInstance_{int(time.time())}"
+    parent_id = os.environ.get("PARENT_INSTANCE", None)
+
+    if not spreadsheet_ids:
+        sheet_id = create_new_sheet()
+    else:
+        sheet_id = spreadsheet_ids[-1]
+
+    write_metadata(sheet_id, instance_id, parent_id)
+
+    start_time = time.time()
     while True:
+        elapsed = time.time() - start_time
+
+        if elapsed >= 660:  # 11 minutes
+            kill_instance()
+
+        elif elapsed >= 540:  # 9 minutes
+            print("⏸️ Pause mode active. No writing.")
+            time.sleep(60)
+            continue
+
         write_timestamp()
-        time.sleep(60)  # Wait 1 minute
+        time.sleep(60)
 
 main()
