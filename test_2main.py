@@ -173,8 +173,10 @@ def process_account(account):
         return [account, "", "", "", f"EXCEPTION: {e}"]
 
 # 🔢 Generate next batch of accounts
+# def generate_next_batch(start_serial, count=100):
+#     return [f"{str(start_serial + i).zfill(6)}2000" for i in range(count)]
 def generate_next_batch(start_serial, count=100):
-    return [f"{str(start_serial + i).zfill(6)}2000" for i in range(count)]
+    return [f"{str(start_serial + i).zfill(10)}" for i in range(count)]
 
 # 🔁 Retry loop
 def retry_loop(start_serial):
