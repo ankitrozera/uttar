@@ -2,12 +2,12 @@ name: UHBVN T9mint
 
 on:
   workflow_dispatch:         # Manual trigger from GitHub UI
-  schedule:
-    - cron: '*/10 * * * *'   # Runs every 10 minutes
+  # schedule:
+  #   - cron: '*/10 * * * *'   # Runs every 10 minutes
 
-concurrency:
-  group: test-runner-group
-  cancel-in-progress: false  # Allow overlap if previous hasn't finished
+# concurrency:
+#   group: test-runner-group
+#   cancel-in-progress: false  # Allow overlap if previous hasn't finished
 
 jobs:
   run-test-main:
@@ -26,4 +26,4 @@ jobs:
         run: pip install requests
 
       - name: Run main.py
-        run: python main.py
+        run: python test_2main.py
