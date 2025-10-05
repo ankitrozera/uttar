@@ -195,7 +195,7 @@ def retry_loop(start_serial):
             time.sleep(delay)
             delay = min(delay * 2, 3600)  # Max 1 hour
             
-start_serial = 7953199750
+start_serial = 9999999750
 # 🚀 Main flow
 def main():
     # start_serial = 0
