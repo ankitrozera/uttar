@@ -194,10 +194,12 @@ def retry_loop(start_serial):
             print(f"⚠️ Server down or all failed. Retrying in {delay//60} min...")
             time.sleep(delay)
             delay = min(delay * 2, 3600)  # Max 1 hour
-
+            
+start_serial = 7953199750
 # 🚀 Main flow
 def main():
-    start_serial = 0
+    # start_serial = 0
+    global start_serial
     while current_sheet_index <= 10:
         start_serial = retry_loop(start_serial)
 
