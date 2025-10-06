@@ -2,21 +2,33 @@ import requests, json, random, time, re
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 
-# 🔐 OAuth credentials
-CLIENT_ID = "737936576743-5dq4nrm7gemrhcks9k4rj5jb0i1futqh.apps.googleusercontent.com"
-CLIENT_SECRET = "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"
-REFRESH_TOKEN = "1//04rioeO3OMoFDCgYIARAAGAQSNwF-L9IrxEkA1bhsICknhjR10Wcg0RYOVLPHJutSu1YOeb3H3-5vvf4eawHNp_kOpBxuNangV80"
-ACCESS_TOKEN = "ya29.a0AQQ_BDQaSOexCPwUTQJ6zWghKCGP-jOy3-WP7eyu1BPd1CWky05cCVh-NTHehDkawGku2mQE5ot8jvq4T-ILfLOBdIVPPcOpmvNgjac3f43NLftkJGZyhrAGWWfNsT0_FwtiWjUyvH7YV1tZADfCi4NsO_Sm5SWLotQ2PA5lCGJBvGLbX4HXiUoFfjC8MMQ3IJViO7YaCgYKAWUSARMSFQHGX2MinE_v9hNxbi8KB9J5sRWuww0206"
+# 🔐 OAuth credentials aaa
+# =======================================================================
+CLIENT_ID = ""
+CLIENT_SECRET = ""
+REFRESH_TOKEN = ""
+ACCESS_TOKEN = ""
 
 # 🌐 Target URL
 url = "https://epayment.uhbvn.org.in/b2cpaybilladvance.aspx"
 
-# 📄 Google Sheets setup
-SHEET_PREFIX = "UHBVN_Accounts_"
-MAX_ACCOUNTS_PER_SHEET = 100000
+DATA_SHEET_ID = ""
+DATA_RANGE = "sheet1!A1:B4"
+
+SHEET_PREFIX = "HBVN_Accounts_"    # 📄 Base name for generated sheets
 current_sheet_index = 1
+MAX_SHEETS = 99                    # 📚 Total sheet limit
+MAX_ACCOUNTS_PER_SHEET = 1001   # 💾 Max rows per sheet
 accounts_written = 0
 spreadsheet_ids = []
+
+BATCH_SIZE = 100                   # 📦 Accounts per batch
+THREAD_WORKERS = 50                # 🧵 Parallel workers per batch
+RETRY_DELAY = 300                  # ⏱ Retry delay in seconds (5 min)
+
+# These are serial no not account no be carefull
+base_start_serial = 999799                    #9999999750     # 🔢 Starting serial
+end_serial        = 999999     # 🔢 Ending serial no 
 
 # 📋 Sheet headers
 sheet_headers = ["account", "name", "address", "load", "error"]
@@ -49,29 +61,99 @@ def refresh_access_token():
     else:
         print("❌ Token refresh failed:", res.text)
 
+def safe_request(method, url, headers=None, **kwargs):
+    if headers is None:
+        headers = {}
+    res = requests.request(method, url, headers=headers, **kwargs)
+    if res.status_code == 401:  # Token expired
+        print("⚠️ Access token expired. Refreshing...")
+        refresh_access_token()
+        headers["Authorization"] = f"Bearer {ACCESS_TOKEN}"
+        res = requests.request(method, url, headers=headers, **kwargs)
+    
+    return res
+
+# DATA_SHEET_ID = ""
+# DATA_RANGE = "sheet1!A1:B4"  # A1=last_serial, B1=sheet_id
+
+def read_data():
+    """Read last_serial, sheet_id, accounts_written, sheet_index from data sheet safely."""
+    url = f"https://sheets.googleapis.com/v4/spreadsheets/{DATA_SHEET_ID}/values/{DATA_RANGE}"
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    res = safe_request("GET", url, headers=headers)
+
+    # Default safe values
+    last_serial = 0
+    sheet_id = None
+    accounts_written = 0
+    sheet_index = 1
+
+    if res.status_code == 200:
+        values = res.json().get("values", [])
+        if len(values) > 0 and len(values[0]) > 1:
+            try:
+                last_serial = int(values[0][1])
+            except:
+                last_serial = 0
+        if len(values) > 1 and len(values[1]) > 1:
+            sheet_id = values[1][1]
+        if len(values) > 2 and len(values[2]) > 1:
+            try:
+                accounts_written = int(values[2][1])
+            except:
+                accounts_written = 0
+        if len(values) > 3 and len(values[3]) > 1:
+            try:
+                sheet_index = int(values[3][1])
+            except:
+                sheet_index = 1
+    else:
+        update_data(0, None, 0, 1)
+
+    return last_serial, sheet_id, accounts_written, sheet_index
+
+def update_data(last_serial, sheet_id, accounts_written, sheet_index):
+    """Update last_serial and current sheet_id in data sheet."""
+    url = f"https://sheets.googleapis.com/v4/spreadsheets/{DATA_SHEET_ID}/values/{DATA_RANGE}?valueInputOption=RAW"
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
+    data = {
+        "values": [
+            ["last_serial", str(last_serial)],
+            ["sheet_id", sheet_id or ""],
+            ["accounts_written", str(accounts_written)],
+            ["current_sheet_index", str(sheet_index)]
+        ]
+    }
+    res =safe_request("PUT", url, headers=headers, data=json.dumps(data))
+    if res.status_code == 200:
+        print(f"✅ Metadata updated → last_serial={last_serial}, sheet_id={sheet_id}")
+    else:
+        print("❌ Metadata update failed:", res.text)
+
 # ✅ Create new Google Sheet
 def create_new_sheet():
-    global current_sheet_index
+    global current_sheet_index, start_serial, accounts_written
+    if current_sheet_index < 1:
+        current_sheet_index = 1
+    current_sheet_index += 1  # ✅ always increment before creating new sheet
+    accounts_written = 0
     url = "https://sheets.googleapis.com/v4/spreadsheets"
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
-    body = {
-        "properties": {
-            "title": f"{SHEET_PREFIX}{current_sheet_index}"
-        }
-    }
-    res = requests.post(url, headers=headers, data=json.dumps(body))
+    body = {"properties": {"title": f"{SHEET_PREFIX}{current_sheet_index}"}}
+    res = safe_request("POST", url, headers=headers, data=json.dumps(body))
     if res.status_code == 200:
         sheet_id = res.json()["spreadsheetId"]
         spreadsheet_ids.append(sheet_id)
         print(f"📄 Sheet created: {sheet_id}")
         write_headers(sheet_id)
-        current_sheet_index += 1
+        update_data(last_serial=start_serial - 1, sheet_id=sheet_id, accounts_written=0, sheet_index=current_sheet_index)
+        # update_data(start_serial - 1, sheet_id, 0, current_sheet_index)
         return sheet_id
     else:
-        print("❌ Sheet creation failed:", res.text)
+        print("❌ Sheet creation failed even after token refresh:", res.text)
         return None
 
 # 📝 Write headers
@@ -87,44 +169,41 @@ def write_headers(sheet_id):
 
 # 📤 Write batch to sheet
 def write_batch_to_sheet(rows):
-    global accounts_written
-    if accounts_written >= MAX_ACCOUNTS_PER_SHEET or not spreadsheet_ids:
-        sheet_id = create_new_sheet()
-    else:
-        sheet_id = spreadsheet_ids[-1]
-
-    url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/Sheet1!A1:append"
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    params = {"valueInputOption": "RAW"}
-    data = {"values": rows}
-    res = requests.post(url, headers=headers, params=params, data=json.dumps(data))
-    if res.status_code == 200:
-        accounts_written += len(rows)
-        print(f"📊 {len(rows)} rows written to sheet.")
-    elif res.status_code == 401:
-        refresh_access_token()
-        write_batch_to_sheet(rows)
-    else:
-        print("❌ Sheet write failed:", res.text)
-
-# 🧠 Extract alerts from HTML
-def extract_alerts(body_text):
-    alerts = re.findall(r"alert\(['\"](.+?)['\"]\)", body_text)
-    classified = []
-    for msg in alerts:
-        msg = msg.strip()
-        if "grecaptcha" in msg:
-            continue
-        if "Enter Correct Captcha" in msg:
-            classified.append(("CAPTCHA_ERROR", msg))
-        elif "We are unable to fetch the Bill Details" in msg or "No Bill available" in msg:
-            classified.append(("BILL_ALERT", msg))
+    global accounts_written, current_sheet_index
+    remaining_rows = rows[:]
+    while remaining_rows:
+        # If no sheet or current sheet is full → create new
+        if not spreadsheet_ids or accounts_written >= MAX_ACCOUNTS_PER_SHEET:
+            sheet_id = create_new_sheet()
+            accounts_written = 0  # reset after new sheet
         else:
-            classified.append(("UNKNOWN_ALERT", msg))
-    return classified
+            sheet_id = spreadsheet_ids[-1]
+        if not sheet_id:
+            print("❌ Sheet creation failed, stopping batch.")
+            break    
+
+        # how many rows can fit in current sheet
+        can_fit = MAX_ACCOUNTS_PER_SHEET - accounts_written
+        to_write = remaining_rows[:can_fit]
+        remaining_rows = remaining_rows[can_fit:]
+
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/Sheet1!A1:append"
+        headers = {
+            "Authorization": f"Bearer {ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        params = {"valueInputOption": "RAW"}
+        data = {"values": to_write}
+
+        res = safe_request("POST", url, headers=headers, params=params, data=json.dumps(data))
+        if res.status_code == 200:
+            accounts_written += len(to_write)
+            print(f"📊 {len(to_write)} rows written to sheet {sheet_id}.")
+            last_serial = start_serial + len(rows) - len(remaining_rows) - 1
+            update_data(last_serial, sheet_id, accounts_written, current_sheet_index)
+        else:
+            print(f"❌ Sheet write failed: {res.text}")
+            break
 
 # 🧵 Process one account
 def process_account(account):
@@ -150,57 +229,114 @@ def process_account(account):
     })
 
     try:
-        res = requests.post(url, headers={"Origin": "https://epayment.uhbvn.org.in", "Referer": "https://epayment.uhbvn.org.in"}, data=payload, timeout=15)
+        res = requests.post(url, headers={"Origin": "", "Referer": ""}, data=payload, timeout=15)
+
+        # Step 1️⃣ – Quick server check
         if res.status_code != 200:
-            return [account, "", "", "", f"HTTP {res.status_code}"]
+            return [account, "", "", "", f"SERVER_DOWN_{res.status_code}"]
+        html = res.text
 
-        body_text = res.text
-        alerts = extract_alerts(body_text)
+        # Step 2️⃣ – Directly identify alert vs data using <div id="part1">
+        if '<div id="part1" style="display:none">' in html:
+            def extract(tag):
+                start = html.find(f'id="{tag}"')
+                if start == -1:
+                    return ""
+                start = html.find('value="', start)
+                if start == -1:
+                    return ""
+                end = html.find('"', start + 7)
+                return html[start + 7:end].strip()
 
-        for tag, msg in alerts:
-            if tag != "CAPTCHA_ERROR":
-                return [account, "", msg, "", msg]
+            soup = BeautifulSoup(html, "html.parser")
+            consumer_name = soup.find(id="lblConsumerName").get("value", "").strip() if soup.find(id="lblConsumerName") else ""
+            address = soup.find(id="lblAddress").text.strip() if soup.find(id="lblAddress") else ""
+            load = soup.find(id="lblLoad").get("value", "").strip() if soup.find(id="lblLoad") else ""
+            return [account, consumer_name, address, load, ""]
+        
+        # ⚡ 3️⃣ If data not found, check for alert section (direct alert read)
+        elif '<div id="part1">' in html:
+            # Extract exact alert message from CDATA
+            start = html.find("alert('")
+            if start != -1:
+                end = html.find("');", start)
+                alert_msg = html[start + 7:end].strip()
+            else:
+                alert_msg = "Unknown alert"
 
-        soup = BeautifulSoup(body_text, "html.parser")
-        account_no = soup.find(id="lblAcNo").get("value", "").strip() if soup.find(id="lblAcNo") else ""
-        consumer_name = soup.find(id="lblConsumerName").get("value", "").strip() if soup.find(id="lblConsumerName") else ""
-        load = soup.find(id="lblLoad").get("value", "").strip() if soup.find(id="lblLoad") else ""
-        address = soup.find(id="lblAddress").text.strip() if soup.find(id="lblAddress") else ""
+            return [account, "", "", "", alert_msg]
 
-        return [account, consumer_name, address, load, ""]
+        else:
+            # ❓ Unexpected HTML (neither alert nor data)
+            return [account, "", "", "", "UNRECOGNIZED_PAGE"]
 
     except Exception as e:
         return [account, "", "", "", f"EXCEPTION: {e}"]
 
-# 🔢 Generate next batch of accounts
-# def generate_next_batch(start_serial, count=100):
-#     return [f"{str(start_serial + i).zfill(6)}2000" for i in range(count)]
-def generate_next_batch(start_serial, count=100):
-    return [f"{str(start_serial + i).zfill(10)}" for i in range(count)]
+# base_start_serial = 9999999750    
+# end_serial   = 9999999999 
+
+def generate_next_batch(start_serial, count=BATCH_SIZE):
+    batch = []
+    for i in range(count):
+        next_num = start_serial + i
+        if next_num > end_serial:
+            break
+        # batch.append(f"{str(next_num).zfill(10)}")
+        batch.append(f"{str(next_num).zfill(6)}2000")  # for 2000 series
+    return batch
 
 # 🔁 Retry loop
 def retry_loop(start_serial):
-    delay = 300  # 5 minutes
+    delay = RETRY_DELAY  # 5 minutes
     while True:
         batch = generate_next_batch(start_serial)
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=THREAD_WORKERS) as executor:
             results = list(executor.map(process_account, batch))
-
-        valid = [r for r in results if r[4] == "" or "No Bill" in r[4] or "unable to fetch" in r[4]]
+        # for r in results[:3]:
+        #     print("DEBUG →", r)    
+        valid = []
+        for r in results:
+            msg = str(r[4]).lower()
+            if "server_error" not in msg and "exception" not in msg:
+                valid.append(r)
+            elif "no bill" in msg or "unable to fetch" in msg:
+                valid.append(r)
+            elif msg == "":
+                valid.append(r)
+        
         if valid:
             write_batch_to_sheet(results)
-            return start_serial + 100
+            # ✅ Batch successful hone ke baad last serial update karo
+            last_serial = start_serial + len(results) - 1
+            update_data(last_serial, spreadsheet_ids[-1], accounts_written, current_sheet_index)
+
+            print(f"✅ Batch written & last_serial updated to {last_serial}")
+            return last_serial + 1
         else:
             print(f"⚠️ Server down or all failed. Retrying in {delay//60} min...")
             time.sleep(delay)
             delay = min(delay * 2, 3600)  # Max 1 hour
             
-start_serial = 9999999750
 # 🚀 Main flow
 def main():
-    # start_serial = 0
-    global start_serial
-    while current_sheet_index <= 10:
+    global start_serial, current_sheet_index, accounts_written
+    last_serial, sheet_id, accounts_written, current_sheet_index = read_data()
+    if accounts_written < 0:
+        accounts_written = 0
+    if current_sheet_index < 1:
+        current_sheet_index = 1
+
+    if sheet_id:
+        spreadsheet_ids.append(sheet_id)
+    else:
+        current_sheet_index = 1    
+
+    start_serial = last_serial + 1 if last_serial else base_start_serial
+
+    print(f"🚀 Starting main loop from serial: {start_serial}")
+    while current_sheet_index <= MAX_SHEETS and start_serial <= end_serial:
         start_serial = retry_loop(start_serial)
 
 main()
+
